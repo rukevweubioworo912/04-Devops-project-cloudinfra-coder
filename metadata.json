@@ -1,0 +1,5 @@
+{
+  "name": "Linux Command Explainer",
+  "description": "A web application that explains Linux commands like you're a junior engineer, powered by the Gemini API.",
+  "requestFramePermissions": []
+}
