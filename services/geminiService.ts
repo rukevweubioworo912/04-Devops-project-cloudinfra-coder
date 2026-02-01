@@ -9,9 +9,13 @@ export interface InfraResult {
   kubernetes: string;
 }
 
-// Helper to get the API key from runtime window config or build-time env
+// Helper to get the API key from runtime window config (injected via config.js)
 const getApiKey = () => {
-  return (window as any).APP_CONFIG?.API_KEY || process.env.API_KEY;
+  const apiKey = (window as any).APP_CONFIG?.API_KEY;
+  if (!apiKey) {
+    console.error("API_KEY not found in window.APP_CONFIG. Ensure config.js is loaded with VITE_API_KEY env var.");
+  }
+  return apiKey;
 };
 
 export const generateInfra = async (prompt: string): Promise<InfraResult> => {

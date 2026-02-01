@@ -29,12 +29,12 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Install serve to run the built app
-RUN npm install -g serve
+# Install serve and gettext (for envsubst)
+RUN npm install -g serve && apk add --no-cache gettext
 
 # Copy the built app from builder
 COPY --from=builder /app/dist ./dist
-COPY --from=builder  ./public/config.template.js
+COPY --from=builder /app/public/config.template.js ./config.template.js
 
 # Expose the port
 EXPOSE 3000
@@ -45,5 +45,5 @@ EXPOSE 3000
 # This will inject the API key into config.js at container startup
 # and then start the server
 CMD sh -c "if [ -z \"$VITE_API_KEY\" ]; then echo 'ERROR: VITE_API_KEY not set'; exit 1; fi && \
-    sed 's|__API_KEY__|$VITE_API_KEY|g' config.template.js > dist/config.js && \
+    envsubst < config.template.js > dist/config.js && \
     serve -s dist -l 3000"
