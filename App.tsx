@@ -1,30 +1,28 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { explainCommand, ExplanationResult } from './services/geminiService';
+import { generateInfra, InfraResult } from './services/geminiService';
 
-const QUICK_COMMANDS = [
-  { cmd: 'aws s3 sync . s3://my-bucket --delete', label: 'AWS: S3 Sync' },
-  { cmd: 'az vm list --output table --resource-group prod-rg', label: 'Azure: List VMs' },
-  { cmd: 'gcloud compute instances stop my-instance --zone us-central1-a', label: 'GCP: Stop VM' },
-  { cmd: 'kubectl get pods -n kube-system', label: 'K8s: Get Pods' },
-  { cmd: 'docker-compose up -d --build', label: 'Docker: Rebuild' }
+const QUICK_TEMPLATES = [
+  { prompt: 'AWS VPC with 2 public subnets, an EKS cluster, and a load balancer', label: 'AWS: EKS Cluster' },
+  { prompt: 'Azure Resource Group with a Linux VM, VNet, and SQL Database', label: 'Azure: VM Stack' },
+  { prompt: 'GCP Cloud Run service with a custom domain and Cloud SQL instance', label: 'GCP: Serverless App' },
+  { prompt: 'Kubernetes deployment for a Node.js app with Horizontal Pod Autoscaler and Service', label: 'K8s: Scalable App' }
 ];
 
 const App: React.FC = () => {
   const [query, setQuery] = useState<string>('');
-  const [result, setResult] = useState<ExplanationResult | null>(null);
+  const [result, setResult] = useState<InfraResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
-  const [errorType, setErrorType] = useState<'NONE' | 'QUOTA' | 'AUTH' | 'LEAKED'>('NONE');
 
   const checkApiKey = useCallback(async () => {
-    if (window.aistudio?.hasSelectedApiKey) {
-      const selected = await window.aistudio.hasSelectedApiKey();
-      setHasApiKey(selected);
-    } else {
-      setHasApiKey(!!process.env.API_KEY);
-    }
+    // Check runtime config first (Docker/K8s), then AI Studio context, then process.env
+    const runtimeKey = (window as any).APP_CONFIG?.API_KEY;
+    const aiStudioKey = window.aistudio?.hasSelectedApiKey ? await window.aistudio.hasSelectedApiKey() : false;
+    const processKey = !!process.env.API_KEY;
+    
+    setHasApiKey(!!runtimeKey || aiStudioKey || processKey);
   }, []);
 
   useEffect(() => {
@@ -35,228 +33,186 @@ const App: React.FC = () => {
     if (window.aistudio?.openSelectKey) {
       await window.aistudio.openSelectKey();
       setHasApiKey(true);
-      setError('');
-      setErrorType('NONE');
     }
   };
 
-  const handleSearch = async (targetQuery?: string) => {
-    const finalQuery = targetQuery || query;
-    if (!finalQuery.trim()) return;
-    if (targetQuery) setQuery(targetQuery);
+  const handleSearch = async (targetPrompt?: string) => {
+    const finalPrompt = targetPrompt || query;
+    if (!finalPrompt.trim()) return;
+    if (targetPrompt) setQuery(targetPrompt);
 
     setIsLoading(true);
     setError('');
-    setErrorType('NONE');
     
     try {
-      const data = await explainCommand(finalQuery);
+      const data = await generateInfra(finalPrompt);
       setResult(data);
     } catch (err: any) {
-      if (err.message === "KEY_LEAKED") {
-        setErrorType('LEAKED');
-        setError('Your API key was reported as leaked. It has been permanently disabled.');
-      } else if (err.message === "KEY_AUTH_REQUIRED") {
+      if (err.message === "KEY_AUTH_REQUIRED") {
         setHasApiKey(false);
-        setErrorType('AUTH');
-        setError('Authentication required. Please authorize your API key.');
+        setError('API Authentication required. Provide an API_KEY environment variable.');
       } else if (err.message === "QUOTA_EXCEEDED") {
-        setErrorType('QUOTA');
-        setError('Your API Key has exceeded its quota.');
+        setError('Quota exceeded. Try again in a minute.');
       } else {
-        setError(err.message || 'The system encountered an error.');
+        setError(err.message || 'Error generating infrastructure.');
       }
     } finally {
       setIsLoading(false);
     }
   };
 
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert('Code copied to clipboard!');
+  };
+
   return (
-    <div className="min-h-screen bg-[#05080a] text-slate-300 font-mono selection:bg-emerald-500/30">
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#161b22_1px,transparent_1px),linear-gradient(to_bottom,#161b22_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]"></div>
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[500px] bg-blue-500/5 blur-[120px] rounded-full"></div>
+    <div className="min-h-screen bg-[#05080a] text-slate-300 font-mono selection:bg-blue-500/30 pb-20">
+      {/* Background Decor */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden opacity-20">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#161b22_1px,transparent_1px),linear-gradient(to_bottom,#161b22_1px,transparent_1px)] bg-[size:60px_60px]"></div>
       </div>
 
-      <div className="relative z-20 w-full border-b border-white/5 bg-black/40 backdrop-blur-md px-6 py-2 flex justify-between items-center text-[10px] tracking-widest uppercase font-bold">
-        <div className="flex items-center gap-4">
+      {/* Header Bar */}
+      <nav className="relative z-20 w-full border-b border-white/5 bg-black/60 backdrop-blur-md px-6 py-3 flex justify-between items-center text-[10px] tracking-[0.2em] uppercase font-bold">
+        <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              errorType === 'LEAKED' ? 'bg-red-600 shadow-[0_0_8px_#dc2626]' : 
-              errorType === 'QUOTA' ? 'bg-orange-500' :
-              hasApiKey ? 'bg-blue-500 shadow-[0_0_8px_#3b82f6]' : 'bg-slate-700'
-            } animate-pulse`}></span>
-            {errorType === 'LEAKED' ? 'Security Alert' : 
-             errorType === 'QUOTA' ? 'Quota Full' :
-             hasApiKey ? 'Cloud Nodes Ready' : 'System Offline'}
+            <span className={`w-2 h-2 rounded-full ${hasApiKey ? 'bg-emerald-500' : 'bg-red-500'} animate-pulse`}></span>
+            {hasApiKey ? 'Architect Online' : 'Auth Required'}
           </div>
-          <div className="text-slate-600 hidden md:block">Engine: Gemini-Flash-3.0-Cloud</div>
+          <span className="text-slate-600 hidden md:block">Engine: Terraform-Flash-Gen</span>
         </div>
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={handleOpenKeySelector}
-            className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
-            Account Access
-          </button>
-        </div>
-      </div>
+        <button onClick={handleOpenKeySelector} className="hover:text-blue-400 transition-colors">
+          [ Configure Workspace ]
+        </button>
+      </nav>
 
-      <div className="relative z-10 max-w-6xl mx-auto px-6 py-16">
+      <main className="relative z-10 max-w-7xl mx-auto px-6 py-12">
         <header className="text-center mb-16">
-          <h1 className="text-6xl md:text-8xl font-black text-white tracking-tighter mb-4 italic">
-            CLOUD<span className="text-blue-500">-</span>DECODE
+          <h1 className="text-5xl md:text-7xl font-black text-white tracking-tighter mb-4">
+            INFRA<span className="text-blue-500">_</span>GEN
           </h1>
-          <p className="text-slate-500 text-sm tracking-[0.2em] uppercase font-bold">
-            Mastering Shell, AWS, Azure, & GCP Infrastructure
+          <p className="text-slate-500 text-sm tracking-widest uppercase font-bold">
+            Terraform & Kubernetes Blueprint Engine
           </p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-          <div className="lg:col-span-5 space-y-10">
-            <section>
-              <form onSubmit={(e) => { e.preventDefault(); handleSearch(); }} className="space-y-4">
-                <div className="group relative">
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-emerald-500 rounded-2xl blur opacity-20 group-focus-within:opacity-40 transition duration-500"></div>
-                  <textarea
-                    rows={4}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Paste your AWS, Azure, or GCP command here..."
-                    className="relative w-full bg-black/80 border border-white/10 rounded-2xl p-6 text-blue-400 focus:border-blue-500/50 outline-none transition-all resize-none shadow-2xl placeholder:text-slate-800"
-                  />
-                </div>
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-10">
+          {/* Left Column: Input & Templates */}
+          <div className="xl:col-span-4 space-y-8">
+            <div className="p-1 border border-white/5 bg-white/[0.02] rounded-3xl">
+              <div className="p-6 space-y-4">
+                <textarea
+                  rows={6}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Describe your infrastructure (e.g., 'Deploy a highly available AWS web app with RDS')..."
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl p-6 text-blue-400 focus:border-blue-500/50 outline-none transition-all resize-none shadow-inner text-sm leading-relaxed"
+                />
                 <button
-                  type="submit"
-                  disabled={isLoading || !hasApiKey || errorType === 'LEAKED'}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-900 text-black font-black py-5 rounded-2xl transition-all shadow-xl shadow-blue-500/10 flex items-center justify-center gap-3 active:scale-[0.98]"
+                  onClick={() => handleSearch()}
+                  disabled={isLoading || !hasApiKey}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-black font-black py-4 rounded-xl transition-all flex items-center justify-center gap-3"
                 >
-                  {isLoading ? (
-                    <div className="flex gap-1.5">
-                      <div className="w-2 h-2 bg-black rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-black rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                      <div className="w-2 h-2 bg-black rounded-full animate-bounce [animation-delay:0.4s]"></div>
-                    </div>
-                  ) : (
-                    <>DECODE INFRASTRUCTURE <span className="text-xl">↵</span></>
-                  )}
+                  {isLoading ? 'GENERATING SCRIPTS...' : 'ARCHITECT INFRASTRUCTURE'}
                 </button>
-              </form>
-            </section>
+              </div>
+            </div>
 
-            <section className="p-8 rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-sm">
-              <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6">Cloud Blueprint Library</h3>
-              <div className="space-y-3">
-                {QUICK_COMMANDS.map((qc, i) => (
+            <div className="space-y-4">
+              <h3 className="text-[10px] font-black text-slate-600 uppercase tracking-widest px-2">Rapid Deployment Blueprints</h3>
+              <div className="grid grid-cols-1 gap-2">
+                {QUICK_TEMPLATES.map((t, i) => (
                   <button
                     key={i}
-                    onClick={() => handleSearch(qc.cmd)}
-                    disabled={errorType === 'LEAKED'}
-                    className="w-full flex items-center justify-between px-5 py-4 rounded-xl border border-white/5 bg-white/5 hover:bg-blue-500/10 hover:border-blue-500/20 text-xs transition-all text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                    onClick={() => handleSearch(t.prompt)}
+                    className="text-left p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-blue-500/10 hover:border-blue-500/20 transition-all group"
                   >
-                    <span>{qc.label}</span>
-                    <span className="text-[9px] opacity-30 font-mono font-bold tracking-tighter">{qc.cmd.split(' ')[0]}</span>
+                    <div className="text-[10px] text-blue-500 mb-1 font-bold">{t.label}</div>
+                    <div className="text-xs text-slate-400 group-hover:text-slate-200 line-clamp-1">{t.prompt}</div>
                   </button>
                 ))}
               </div>
-            </section>
+            </div>
           </div>
 
-          <div className="lg:col-span-7">
-            {errorType !== 'NONE' ? (
-              <div className={`p-10 rounded-3xl border ${errorType === 'LEAKED' ? 'border-red-500 bg-red-500/10' : 'border-white/10 bg-white/5'} text-center space-y-6`}>
-                <div className={`w-16 h-16 ${errorType === 'LEAKED' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400'} rounded-full flex items-center justify-center mx-auto`}>
-                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-black text-xl uppercase text-white">{errorType === 'LEAKED' ? 'Access Denied' : 'System Error'}</h4>
-                  <p className="text-sm text-slate-400 max-w-sm mx-auto">{error}</p>
-                </div>
-                <button 
-                  onClick={handleOpenKeySelector}
-                  className="bg-white text-black font-black px-10 py-4 rounded-2xl hover:bg-blue-500 transition-colors"
-                >
-                  Configure New Key
-                </button>
+          {/* Right Column: Generated Code */}
+          <div className="xl:col-span-8">
+            {error ? (
+              <div className="p-12 border border-red-500/20 bg-red-500/5 rounded-3xl text-center space-y-4">
+                <div className="text-red-500 font-bold uppercase tracking-widest">Architectural Error</div>
+                <p className="text-sm text-slate-400">{error}</p>
               </div>
             ) : result ? (
-              <div className="space-y-10 animate-in fade-in slide-in-from-right-10 duration-700">
-                <div className="p-10 rounded-3xl border border-white/10 bg-black/60 shadow-2xl">
-                  <div className="flex items-center gap-3 mb-8">
-                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                    <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                    <div className="h-px flex-grow bg-white/10 ml-4"></div>
-                  </div>
-                  
-                  <h2 className="text-4xl font-black text-white mb-6">
-                    <span className="text-blue-500">$</span> {result.issue}
-                  </h2>
-
-                  <div className="space-y-8">
-                    <div>
-                      <h4 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-3">Operational Logic:</h4>
-                      <p className="text-slate-300 font-sans leading-relaxed">{result.cause}</p>
-                    </div>
-                    <div>
-                      <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-3">Architect Tip:</h4>
-                      <p className="text-slate-300 font-sans leading-relaxed italic border-l-2 border-emerald-500/30 pl-4">{result.solution}</p>
-                    </div>
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-5 duration-500">
+                {/* Intro Section */}
+                <div className="p-8 rounded-3xl border border-white/10 bg-black/40">
+                  <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tight">{result.title}</h2>
+                  <p className="text-slate-400 text-sm leading-relaxed mb-6">{result.explanation}</p>
+                  <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
+                    <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-2">Best Practices & Security</h4>
+                    <p className="text-xs text-slate-300 leading-relaxed italic">{result.bestPractices}</p>
                   </div>
                 </div>
 
-                <div className="p-10 rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-sm">
-                  <h4 className="text-white text-sm font-black mb-8 flex items-center gap-3 uppercase">
-                    <span className="w-8 h-px bg-blue-500"></span> Implementation Patterns
-                  </h4>
-                  <div className="space-y-6">
-                    {result.examples.map((ex, i) => (
-                      <div key={i} className="group relative">
-                        <div className="absolute -inset-2 bg-blue-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                        <div className="relative">
-                          <div className="flex justify-between mb-2">
-                            <span className="text-[9px] text-slate-600 font-bold tracking-widest uppercase">Pattern {i+1}</span>
-                            <button 
-                              onClick={() => navigator.clipboard.writeText(ex.split('#')[0].trim())}
-                              className="text-[9px] text-blue-500/50 hover:text-blue-400 font-black uppercase"
-                            >
-                              [ Copy ]
-                            </button>
-                          </div>
-                          <div className="bg-black/60 border border-white/5 rounded-xl p-4">
-                            <code className="block text-blue-400 text-sm break-all">
-                              {ex.includes('#') ? ex.split('#')[0] : ex}
-                            </code>
-                            {ex.includes('#') && (
-                              <p className="mt-2 text-xs text-slate-500 font-sans leading-relaxed border-t border-white/5 pt-2 italic">
-                                # {ex.split('#')[1]}
-                              </p>
-                            )}
-                          </div>
-                        </div>
+                {/* Code Tabs Style Blocks */}
+                <div className="space-y-8">
+                  {/* Terraform Block */}
+                  <div className="border border-white/10 rounded-3xl overflow-hidden bg-black/80">
+                    <div className="px-6 py-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                        <span className="text-[10px] font-black uppercase tracking-widest">main.tf (Terraform)</span>
                       </div>
-                    ))}
+                      <button 
+                        onClick={() => copyToClipboard(result.terraform)}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 uppercase font-bold"
+                      >
+                        [ Copy HCL ]
+                      </button>
+                    </div>
+                    <pre className="p-8 overflow-x-auto text-xs text-blue-400/90 leading-relaxed max-h-[500px]">
+                      <code>{result.terraform}</code>
+                    </pre>
+                  </div>
+
+                  {/* K8s Block */}
+                  <div className="border border-white/10 rounded-3xl overflow-hidden bg-black/80">
+                    <div className="px-6 py-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <span className="text-[10px] font-black uppercase tracking-widest">manifest.yaml (Kubernetes)</span>
+                      </div>
+                      <button 
+                        onClick={() => copyToClipboard(result.kubernetes)}
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 uppercase font-bold"
+                      >
+                        [ Copy YAML ]
+                      </button>
+                    </div>
+                    <pre className="p-8 overflow-x-auto text-xs text-emerald-400/90 leading-relaxed max-h-[500px]">
+                      <code>{result.kubernetes}</code>
+                    </pre>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="h-full min-h-[500px] flex flex-col items-center justify-center p-20 text-center rounded-[40px] border-2 border-white/5 border-dashed bg-white/[0.01]">
-                <div className="w-24 h-24 text-slate-800 mb-8 opacity-20">
+              <div className="h-full min-h-[600px] border-2 border-dashed border-white/5 rounded-[40px] flex flex-col items-center justify-center text-center p-20 opacity-40">
+                <div className="w-20 h-20 mb-8 text-slate-800">
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                 </div>
-                <h3 className="text-slate-500 font-black text-xl uppercase tracking-widest">Awaiting Blueprint</h3>
-                <p className="text-slate-700 text-xs max-w-xs mx-auto mt-4 leading-relaxed uppercase tracking-widest font-bold">
-                  Paste any shell or cloud provider CLI string for real-time architectural decomposition.
+                <h3 className="text-xl font-black uppercase tracking-widest mb-4">Workspace Empty</h3>
+                <p className="text-xs max-w-sm leading-relaxed font-bold uppercase tracking-tighter">
+                  Define your cloud architecture in the input field to generate production-ready IaC scripts.
                 </p>
               </div>
             )}
           </div>
         </div>
-      </div>
+      </main>
 
-      <footer className="py-20 text-center opacity-30">
-        <p className="text-[9px] text-slate-500 uppercase tracking-[0.5em] font-bold">Multi-Cloud Protocol V3.0 • Flash Layer • {new Date().getFullYear()}</p>
+      <footer className="mt-20 text-center opacity-20 py-10">
+        <p className="text-[9px] font-black uppercase tracking-[1em]">InfraGen Protocol • Secure IaC Logic • {new Date().getFullYear()}</p>
       </footer>
     </div>
   );
