@@ -9,13 +9,18 @@ export interface InfraResult {
   kubernetes: string;
 }
 
-// Helper to get the API key from runtime window config (injected via config.js)
+// Helper to get the API key from runtime window config or build-time env
 const getApiKey = () => {
-  const apiKey = (window as any).APP_CONFIG?.API_KEY;
-  if (!apiKey) {
-    console.error("API_KEY not found in window.APP_CONFIG. Ensure config.js is loaded with VITE_API_KEY env var.");
-  }
-  return apiKey;
+  const runtimeKey = (window as any).APP_CONFIG?.API_KEY;
+  const buildKey = process.env.API_KEY;
+
+  // Filter out literal "undefined" or "null" strings that build tools sometimes inject
+  const isValid = (key: any) => key && key !== "undefined" && key !== "null" && key.trim() !== "";
+
+  if (isValid(runtimeKey)) return runtimeKey;
+  if (isValid(buildKey)) return buildKey;
+  
+  return undefined;
 };
 
 export const generateInfra = async (prompt: string): Promise<InfraResult> => {
