@@ -1,71 +1,76 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-export interface ExplanationResult {
-  issue: string;
-  cause: string;
-  solution: string;
-  examples: string[];
+export interface InfraResult {
+  title: string;
+  explanation: string;
+  bestPractices: string;
+  terraform: string;
+  kubernetes: string;
 }
 
-export const explainCommand = async (command: string): Promise<ExplanationResult> => {
-  // Switched to gemini-3-flash-preview for better quota availability during testing
-  const modelName = 'gemini-3-flash-preview';
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get the API key from runtime window config or build-time env
+const getApiKey = () => {
+  return (window as any).APP_CONFIG?.API_KEY || process.env.API_KEY;
+};
 
-  const systemInstruction = `You are a world-class Cloud Solutions Architect and DevOps Mentor. 
-  A junior engineer needs help understanding a CLI command. This could be a standard Linux shell command or a cloud provider CLI (AWS CLI, Azure CLI, or Google Cloud CLI/gcloud).
+export const generateInfra = async (prompt: string): Promise<InfraResult> => {
+  const modelName = 'gemini-3-flash-preview';
+  const apiKey = getApiKey();
   
-  Your goal:
-  1. Detect the platform (Linux, AWS, Azure, or GCP).
-  2. Explain the command clearly for a junior level.
-  3. For Cloud CLIs: Briefly mention what resource is being affected and if there are specific IAM permissions usually required.
-  4. Use the "issue" field for the Command Name (e.g., 'aws s3 sync' or 'az vm create').
-  5. Use the "cause" field to explain the logic and parameters in plain English.
-  6. Use the "solution" field to provide a "Cloud Architect Tip" - a best practice or a warning (like cost or security) related to that command.
-  7. Provide 3-4 "examples" that are practical, safe, and production-ready.
+  if (!apiKey) {
+    throw new Error("KEY_AUTH_REQUIRED");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const systemInstruction = `You are a Senior Cloud Infrastructure Architect and DevOps Lead.
+  Your task is to generate production-ready Infrastructure as Code (IaC).
   
-  Format examples as: "command # clear explanation"
+  Inputs will describe a cloud setup (AWS, Azure, or GCP).
+  Outputs MUST include:
+  1. A descriptive 'title' for the project.
+  2. A brief architectural 'explanation'.
+  3. A section of 'bestPractices' focusing on security, scalability, and cost.
+  4. 'terraform': A complete, valid Terraform (.tf) script including providers, variables, and resources.
+  5. 'kubernetes': A complete, valid Kubernetes manifest (.yaml) if applicable to the request (e.g., if it involves clusters, pods, or services). If not applicable, provide a basic namespace or deployment example.
+
+  Ensure Terraform uses modern syntax and Kubernetes uses stable API versions.
+  Support AWS, Azure, and Google Cloud Platform.
   
   You MUST output valid JSON.`;
 
   try {
     const response = await ai.models.generateContent({
       model: modelName,
-      contents: `Explain this CLI command like I'm a junior dev: ${command}`,
+      contents: `Generate IaC for this request: ${prompt}`,
       config: {
         systemInstruction: systemInstruction,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            issue: { type: Type.STRING },
-            cause: { type: Type.STRING },
-            solution: { type: Type.STRING },
-            examples: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            }
+            title: { type: Type.STRING },
+            explanation: { type: Type.STRING },
+            bestPractices: { type: Type.STRING },
+            terraform: { type: Type.STRING },
+            kubernetes: { type: Type.STRING }
           },
-          required: ["issue", "cause", "solution", "examples"]
+          required: ["title", "explanation", "bestPractices", "terraform", "kubernetes"]
         }
       },
     });
 
     const text = response.text;
     if (!text) throw new Error("Empty response from AI");
-    return JSON.parse(text) as ExplanationResult;
+    return JSON.parse(text) as InfraResult;
   } catch (error: any) {
     console.error("Gemini Error:", error);
-    
     const message = error?.message || "";
-    if (message.includes("leaked") || (message.includes("PERMISSION_DENIED") && message.includes("reported"))) {
-      throw new Error("KEY_LEAKED");
-    }
     if (message.includes("429") || message.toLowerCase().includes("quota")) {
       throw new Error("QUOTA_EXCEEDED");
     }
-    if (message.includes("Requested entity was not found.") || message.includes("API_KEY_INVALID")) {
+    if (message.includes("Requested entity was not found.") || message.includes("API_KEY_INVALID") || message.includes("API key not found")) {
       throw new Error("KEY_AUTH_REQUIRED");
     }
     throw error;
